@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SolanaCFO Treasury — KMS Customer Managed Key for encryption
+
+Resources:
+  TreasuryKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Customer Managed Key for SolanaCFO Treasury encryption at rest
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyUsage: ENCRYPT_DECRYPT
+      MultiRegion: false
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: solanacfo-treasury-key-policy
+        Statement:
+          - Sid: EnableRootAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: AllowDynamoDB
+            Effect: Allow
+            Principal:
+              Service: dynamodb.amazonaws.com
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: AllowS3
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: AllowSQS
+            Effect: Allow
+            Principal:
+              Service: sqs.amazonaws.com
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: AllowLambdaFunctions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/solanacfo-lambda-execution-role"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Purpose
+          Value: EncryptionAtRest
+
+  TreasuryKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/solanacfo-treasury-key
+      TargetKeyId: !Ref TreasuryKMSKey
+
+Outputs:
+  KMSKeyId:
+    Description: KMS Customer Managed Key ID
+    Value: !Ref TreasuryKMSKey
+
+  KMSKeyArn:
+    Description: KMS Customer Managed Key ARN
+    Value: !GetAtt TreasuryKMSKey.Arn
+
+  KMSKeyAlias:
+    Description: KMS Key Alias
+    Value: !Ref TreasuryKMSKeyAlias

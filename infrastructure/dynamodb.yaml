@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SolanaCFO Treasury — DynamoDB tables definition (referenced from main template)
+
+Parameters:
+  KMSKeyId:
+    Type: String
+    Description: KMS CMK ID for server-side encryption
+
+Resources:
+
+  TreasuriesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-treasuries
+      KeySchema:
+        - AttributeName: treasury_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: wallet_address
+          AttributeType: S
+        - AttributeName: organization
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: WalletIndex
+          KeySchema:
+            - AttributeName: wallet_address
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: OrganizationIndex
+          KeySchema:
+            - AttributeName: organization
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: TreasuryState
+
+  PositionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-positions
+      KeySchema:
+        - AttributeName: position_id
+          KeyType: HASH
+        - AttributeName: treasury_id
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: position_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: protocol
+          AttributeType: S
+        - AttributeName: token_mint
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: ProtocolIndex
+          KeySchema:
+            - AttributeName: protocol
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TokenMintIndex
+          KeySchema:
+            - AttributeName: token_mint
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: Positions
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-transactions
+      KeySchema:
+        - AttributeName: transaction_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: transaction_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: signature
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: TreasuryTransactionIndex
+          KeySchema:
+            - AttributeName: treasury_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: SignatureIndex
+          KeySchema:
+            - AttributeName: signature
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: Transactions
+
+  DeliberationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-deliberations
+      KeySchema:
+        - AttributeName: deliberation_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: deliberation_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: TreasuryDeliberationIndex
+          KeySchema:
+            - AttributeName: treasury_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: Deliberations
+
+  GovernanceProposalsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-governance-proposals
+      KeySchema:
+        - AttributeName: proposal_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: proposal_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: proposal_type
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: TreasuryProposalIndex
+          KeySchema:
+            - AttributeName: treasury_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ProposalStatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ProposalTypeIndex
+          KeySchema:
+            - AttributeName: proposal_type
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: Governance
+
+  RiskAlertsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-risk-alerts
+      KeySchema:
+        - AttributeName: alert_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: alert_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: severity
+          AttributeType: S
+        - AttributeName: alert_type
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: TreasuryAlertIndex
+          KeySchema:
+            - AttributeName: treasury_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: SeverityIndex
+          KeySchema:
+            - AttributeName: severity
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: AlertTypeIndex
+          KeySchema:
+            - AttributeName: alert_type
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref KMSKeyId
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: Component
+          Value: RiskAlerts
+
+Outputs:
+  TreasuriesTableName:
+    Value: !Ref TreasuriesTable
+  PositionsTableName:
+    Value: !Ref PositionsTable
+  TransactionsTableName:
+    Value: !Ref TransactionsTable
+  DeliberationsTableName:
+    Value: !Ref DeliberationsTable
+  GovernanceProposalsTableName:
+    Value: !Ref GovernanceProposalsTable
+  RiskAlertsTableName:
+    Value: !Ref RiskAlertsTable

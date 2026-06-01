@@ -1,0 +1,1077 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SolanaCFO Treasury — On-Chain Solana Treasury Management Platform
+  with Multi-Agent Council Deliberation. Built for Superteam.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 512
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: solanacfo-treasury
+        POWERTOOLS_METRICS_NAMESPACE: SolanaCFO
+        LOG_LEVEL: INFO
+        BEDROCK_REGION: !Ref AWS::Region
+        DYNAMODB_TREASURIES_TABLE: !Ref TreasuriesTable
+        DYNAMODB_POSITIONS_TABLE: !Ref PositionsTable
+        DYNAMODB_TRANSACTIONS_TABLE: !Ref TransactionsTable
+        DYNAMODB_DELIBERATIONS_TABLE: !Ref DeliberationsTable
+        DYNAMODB_GOVERNANCE_TABLE: !Ref GovernanceProposalsTable
+        DYNAMODB_RISK_ALERTS_TABLE: !Ref RiskAlertsTable
+        S3_TREASURY_REPORTS_BUCKET: !Ref TreasuryReportsBucket
+        S3_AUDIO_BRIEFINGS_BUCKET: !Ref AudioBriefingsBucket
+        S3_GOVERNANCE_DOCS_BUCKET: !Ref GovernanceDocumentsBucket
+        SQS_ONCHAIN_QUEUE: !Ref OnChainEventsQueue
+        SQS_GOVERNANCE_QUEUE: !Ref GovernanceEventsQueue
+        SQS_PRICE_ALERTS_QUEUE: !Ref PriceAlertsQueue
+        SNS_PRICE_ALERTS_TOPIC: !Ref PriceAlertsTopic
+        SNS_RISK_ALERTS_TOPIC: !Ref RiskAlertsTopic
+        SNS_GOVERNANCE_ALERTS_TOPIC: !Ref GovernanceAlertsTopic
+        COGNITO_USER_POOL_ID: !Ref CognitoUserPool
+        KMS_KEY_ID: !Ref TreasuryKMSKey
+    Layers:
+      - !Ref DependenciesLayer
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroup
+      SubnetIds: !GetAtt VPCStack.Outputs.PrivateSubnetIds
+
+Parameters:
+  SolanaRpcUrl:
+    Type: String
+    Default: "https://api.mainnet-beta.solana.com"
+    Description: Solana RPC endpoint URL
+  SolanaWssUrl:
+    Type: String
+    Default: "wss://api.mainnet-beta.solana.com"
+    Description: Solana WebSocket endpoint URL
+  DeepgramApiKey:
+    Type: String
+    NoEcho: true
+    Description: Deepgram API key for STT/TTS
+  TreasuryThresholdPercent:
+    Type: Number
+    Default: 5
+    Description: Percentage threshold for large transfer alerts
+  GovernanceQuorumPercent:
+    Type: Number
+    Default: 40
+    Description: Quorum percentage required for governance proposals
+  GovernanceMajorityPercent:
+    Type: Number
+    Default: 60
+    Description: Majority percentage required to pass proposals
+  BedrockModelId:
+    Type: String
+    Default: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    Description: Bedrock model ID for Claude
+
+Resources:
+
+  # ─── Nested Stacks ────────────────────────────────────────────────
+
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infrastructure/vpc.yaml
+      Parameters:
+        VpcCidr: "10.42.0.0/16"
+        PublicSubnetCidrs: "10.42.1.0/24,10.42.2.0/24,10.42.3.0/24"
+        PrivateSubnetCidrs: "10.42.11.0/24,10.42.12.0/24,10.42.13.0/24"
+
+  KMSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infrastructure/kms.yaml
+
+  # ─── DynamoDB Tables ──────────────────────────────────────────────
+
+  TreasuriesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-treasuries
+      KeySchema:
+        - AttributeName: treasury_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: treasury_id
+          AttributeType: S
+        - AttributeName: wallet_address
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: WalletIndex
+          KeySchema:
+            - AttributeName: wallet_address
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  PositionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solanacfo-positions
+      KeySchema:
+        - AttributeName: position_id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: position_id
+          AttributeType: S
+        - AttributeName: treasury_id
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: TreasuryIndex
+          KeySchema:
+            - AttributeName: treasury_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEType: KMS
+        SSEEnabled: true
+        KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    KeySchema:
+      - AttributeName: transaction_id
+        KeyType: HASH
+    AttributeDefinitions:
+      - AttributeName: transaction_id
+        AttributeType: S
+      - AttributeName: treasury_id
+        AttributeType: S
+    GlobalSecondaryIndexes:
+      - IndexName: TreasuryTransactionIndex
+        KeySchema:
+          - AttributeName: treasury_id
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+    BillingMode: PAY_PER_REQUEST
+    PointInTimeRecoverySpecification:
+      PointInTimeRecoveryEnabled: true
+    TableName: solanacfo-transactions
+    SSESpecification:
+      SSEType: KMS
+      SSEEnabled: true
+      KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  DeliberationsTable:
+    Type: AWS::DynamoDB::Table
+    KeySchema:
+      - AttributeName: deliberation_id
+        KeyType: HASH
+    AttributeDefinitions:
+      - AttributeName: deliberation_id
+        AttributeType: S
+      - AttributeName: treasury_id
+        AttributeType: S
+      - AttributeName: status
+        AttributeType: S
+    GlobalSecondaryIndexes:
+      - IndexName: TreasuryDeliberationIndex
+        KeySchema:
+          - AttributeName: treasury_id
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+      - IndexName: StatusIndex
+        KeySchema:
+          - AttributeName: status
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+    BillingMode: PAY_PER_REQUEST
+    PointInTimeRecoverySpecification:
+      PointInTimeRecoveryEnabled: true
+    TableName: solanacfo-deliberations
+    SSESpecification:
+      SSEType: KMS
+      SSEEnabled: true
+      KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  GovernanceProposalsTable:
+    Type: AWS::DynamoDB::Table
+    KeySchema:
+      - AttributeName: proposal_id
+        KeyType: HASH
+    AttributeDefinitions:
+      - AttributeName: proposal_id
+        AttributeType: S
+      - AttributeName: treasury_id
+        AttributeType: S
+      - AttributeName: status
+        AttributeType: S
+    GlobalSecondaryIndexes:
+      - IndexName: TreasuryProposalIndex
+        KeySchema:
+          - AttributeName: treasury_id
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+      - IndexName: ProposalStatusIndex
+        KeySchema:
+          - AttributeName: status
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+    BillingMode: PAY_PER_REQUEST
+    PointInTimeRecoverySpecification:
+      PointInTimeRecoveryEnabled: true
+    TableName: solanacfo-governance-proposals
+    SSESpecification:
+      SSEType: KMS
+      SSEEnabled: true
+      KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  RiskAlertsTable:
+    Type: AWS::DynamoDB::Table
+    KeySchema:
+      - AttributeName: alert_id
+        KeyType: HASH
+    AttributeDefinitions:
+      - AttributeName: alert_id
+        AttributeType: S
+      - AttributeName: treasury_id
+        AttributeType: S
+      - AttributeName: severity
+        AttributeType: S
+    GlobalSecondaryIndexes:
+      - IndexName: TreasuryAlertIndex
+        KeySchema:
+          - AttributeName: treasury_id
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+      - IndexName: SeverityIndex
+        KeySchema:
+          - AttributeName: severity
+            KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+    BillingMode: PAY_PER_REQUEST
+    TimeToLiveSpecification:
+      AttributeName: expires_at
+      Enabled: true
+    TableName: solanacfo-risk-alerts
+    SSESpecification:
+      SSEType: KMS
+      SSEEnabled: true
+      KMSMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  # ─── S3 Buckets ──────────────────────────────────────────────────
+
+  TreasuryReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-treasury-reports-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt KMSStack.Outputs.KMSKeyId
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldReports
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  TreasuryReportsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TreasuryReportsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnforceSSLOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt TreasuryReportsBucket.Arn
+              - !Sub "${TreasuryReportsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  AudioBriefingsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-audio-briefings-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt KMSStack.Outputs.KMSKeyId
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldAudio
+            Status: Enabled
+            ExpirationInDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - "https://app.solanacfo.dev"
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - "*"
+            MaxAge: 3600
+
+  GovernanceDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-governance-docs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt KMSStack.Outputs.KMSKeyId
+      VersioningConfiguration:
+        Status: Enabled
+
+  # ─── SQS Queues ──────────────────────────────────────────────────
+
+  OnChainEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: solanacfo-onchain-events
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        maxReceiveCount: 3
+        deadLetterTargetArn: !GetAtt OnChainEventsDLQ.Arn
+      Encryption:
+        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  OnChainEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: solanacfo-onchain-events-dlq
+
+  GovernanceEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: solanacfo-governance-events
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        maxReceiveCount: 3
+        deadLetterTargetArn: !GetAtt GovernanceEventsDLQ.Arn
+      Encryption:
+        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  GovernanceEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: solanacfo-governance-events-dlq
+
+  PriceAlertsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: solanacfo-price-alerts
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 86400
+      Encryption:
+        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+
+  # ─── SNS Topics ───────────────────────────────────────────────────
+
+  PriceAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: solanacfo-price-alerts
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  RiskAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: solanacfo-risk-alerts
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  GovernanceAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: solanacfo-governance-alerts
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  # ─── Cognito ──────────────────────────────────────────────────────
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: solanacfo-treasury-users
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+      Schema:
+        - Name: wallet_address
+          AttributeType: String
+          Mutable: true
+        - Name: treasury_role
+          AttributeType: String
+          Mutable: true
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: solanacfo-treasury-web
+      UserPoolId: !Ref CognitoUserPool
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_SRP_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        RefreshToken: days
+
+  # ─── KMS ──────────────────────────────────────────────────────────
+
+  TreasuryKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: SolanaCFO Treasury encryption key
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableRootAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowLambdaUsage
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/${LambdaExecutionRole}"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey"
+              - "kms:DescribeKey"
+            Resource: "*"
+
+  TreasuryKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/solanacfo-treasury-key
+      TargetKeyId: !Ref TreasuryKMSKey
+
+  # ─── Security Groups ─────────────────────────────────────────────
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for SolanaCFO Lambda functions
+      VpcId: !GetAtt VPCStack.Outputs.VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: HTTPS outbound for API calls
+        - IpProtocol: tcp
+          FromPort: 8899
+          ToPort: 8899
+          CidrIp: "0.0.0.0/0"
+          Description: Solana RPC outbound
+        - IpProtocol: tcp
+          FromPort: 8900
+          ToPort: 8900
+          CidrIp: "0.0.0.0/0"
+          Description: Solana RPC TLS outbound
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+
+  # ─── IAM Roles ───────────────────────────────────────────────────
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: solanacfo-lambda-execution-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:PutItem"
+                  - "dynamodb:GetItem"
+                  - "dynamodb:UpdateItem"
+                  - "dynamodb:DeleteItem"
+                  - "dynamodb:Query"
+                  - "dynamodb:Scan"
+                  - "dynamodb:BatchWriteItem"
+                  - "dynamodb:DescribeTable"
+                Resource:
+                  - !GetAtt TreasuriesTable.Arn
+                  - !GetAtt PositionsTable.Arn
+                  - !GetAtt TransactionsTable.Arn
+                  - !GetAtt DeliberationsTable.Arn
+                  - !GetAtt GovernanceProposalsTable.Arn
+                  - !GetAtt RiskAlertsTable.Arn
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/solanacfo-*/index/*"
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                  - "s3:DeleteObject"
+                Resource:
+                  - !GetAtt TreasuryReportsBucket.Arn
+                  - !Sub "${TreasuryReportsBucket.Arn}/*"
+                  - !GetAtt AudioBriefingsBucket.Arn
+                  - !Sub "${AudioBriefingsBucket.Arn}/*"
+                  - !GetAtt GovernanceDocumentsBucket.Arn
+                  - !Sub "${GovernanceDocumentsBucket.Arn}/*"
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:ReceiveMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                Resource:
+                  - !GetAtt OnChainEventsQueue.Arn
+                  - !GetAtt GovernanceEventsQueue.Arn
+                  - !GetAtt PriceAlertsQueue.Arn
+        - PolicyName: SNSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sns:Publish"
+                Resource:
+                  - !Ref PriceAlertsTopic
+                  - !Ref RiskAlertsTopic
+                  - !Ref GovernanceAlertsTopic
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "bedrock:InvokeModel"
+                  - "bedrock:InvokeModelWithResponseStream"
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}"
+        - PolicyName: KMSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kms:Encrypt"
+                  - "kms:Decrypt"
+                  - "kms:GenerateDataKey"
+                  - "kms:DescribeKey"
+                Resource: !GetAtt TreasuryKMSKey.Arn
+        - PolicyName: CognitoAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "cognito-idp:AdminCreateUser"
+                  - "cognito-idp:AdminGetUser"
+                  - "cognito-idp:AdminUpdateUserAttributes"
+                  - "cognito-idp:ListUsers"
+                Resource: !GetAtt CognitoUserPool.Arn
+        - PolicyName: CloudWatchAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+
+  # ─── Dependencies Layer ───────────────────────────────────────────
+
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: solanacfo-dependencies
+      Description: Shared Python dependencies for SolanaCFO Treasury
+      ContentUri: lambdas/common
+      CompatibleRuntimes:
+        - python3.12
+      RetentionPolicy: Retain
+
+  # ─── Lambda Functions ─────────────────────────────────────────────
+
+  TreasuryManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-treasury-management
+      Handler: lambdas/treasury_management/app.lambda_handler
+      CodeUri: .
+      Timeout: 60
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          DEEPGRAM_API_KEY: !Ref DeepgramApiKey
+      Events:
+        CreateTreasury:
+          Type: Api
+          Properties:
+            Path: /treasury/create
+            Method: post
+            RestApiId: !Ref TreasuryApi
+        GetTreasury:
+          Type: Api
+          Properties:
+            Path: /treasury/{treasuryId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+        UpdateTreasury:
+          Type: Api
+          Properties:
+            Path: /treasury/{treasuryId}
+            Method: put
+            RestApiId: !Ref TreasuryApi
+
+  PortfolioAnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-portfolio-analyzer
+      Handler: lambdas/portfolio_analyzer/app.lambda_handler
+      CodeUri: .
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        AnalyzePortfolio:
+          Type: Api
+          Properties:
+            Path: /portfolio/{treasuryId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  RiskMonitorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-risk-monitor
+      Handler: lambdas/risk_monitor/app.lambda_handler
+      CodeUri: .
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          TREASURY_THRESHOLD_PERCENT: !Ref TreasuryThresholdPercent
+      Events:
+        GetRiskAssessment:
+          Type: Api
+          Properties:
+            Path: /risk/{treasuryId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  YieldStrategistFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-yield-strategist
+      Handler: lambdas/yield_strategist/app.lambda_handler
+      CodeUri: .
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        GetYieldOpportunities:
+          Type: Api
+          Properties:
+            Path: /yield/opportunities
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  GovernanceAnalystFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-governance-analyst
+      Handler: lambdas/governance_analyst/app.lambda_handler
+      CodeUri: .
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        AnalyzeGovernance:
+          Type: Api
+          Properties:
+            Path: /governance/analyze
+            Method: post
+            RestApiId: !Ref TreasuryApi
+
+  TreasuryCFOFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-treasury-cfo
+      Handler: lambdas/treasury_cfo/app.lambda_handler
+      CodeUri: .
+      Timeout: 180
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        GetCFOReport:
+          Type: Api
+          Properties:
+            Path: /cfo/report/{treasuryId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  CouncilDeliberationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-council-deliberation
+      Handler: lambdas/council_deliberation/app.lambda_handler
+      CodeUri: .
+      Timeout: 300
+      MemorySize: 2048
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        StartDeliberation:
+          Type: Api
+          Properties:
+            Path: /council/deliberate
+            Method: post
+            RestApiId: !Ref TreasuryApi
+        GetDeliberation:
+          Type: Api
+          Properties:
+            Path: /council/{deliberationId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  OnChainMonitorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-onchain-monitor
+      Handler: lambdas/on_chain_monitor/app.lambda_handler
+      CodeUri: .
+      Timeout: 180
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          SOLANA_WSS_URL: !Ref SolanaWssUrl
+          TREASURY_THRESHOLD_PERCENT: !Ref TreasuryThresholdPercent
+      Events:
+        OnChainEvents:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OnChainEventsQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+
+  GovernanceExecutorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-governance-executor
+      Handler: lambdas/governance_executor/app.lambda_handler
+      CodeUri: .
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          SOLANA_RPC_URL: !Ref SolanaRpcUrl
+          GOVERNANCE_QUORUM_PERCENT: !Ref GovernanceQuorumPercent
+          GOVERNANCE_MAJORITY_PERCENT: !Ref GovernanceMajorityPercent
+      Events:
+        ProposeGovernance:
+          Type: Api
+          Properties:
+            Path: /governance/propose
+            Method: post
+            RestApiId: !Ref TreasuryApi
+        VoteGovernance:
+          Type: Api
+          Properties:
+            Path: /governance/vote
+            Method: post
+            RestApiId: !Ref TreasuryApi
+        ExecuteGovernance:
+          Type: Api
+          Properties:
+            Path: /governance/execute
+            Method: post
+            RestApiId: !Ref TreasuryApi
+
+  VoiceBriefingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: solanacfo-voice-briefing
+      Handler: lambdas/voice_briefing/app.lambda_handler
+      CodeUri: .
+      Timeout: 180
+      MemorySize: 1024
+      Environment:
+        Variables:
+          DEEPGRAM_API_KEY: !Ref DeepgramApiKey
+      Events:
+        GenerateBriefing:
+          Type: Api
+          Properties:
+            Path: /voice/briefing
+            Method: post
+            RestApiId: !Ref TreasuryApi
+        GetBriefing:
+          Type: Api
+          Properties:
+            Path: /voice/briefing/{briefingId}
+            Method: get
+            RestApiId: !Ref TreasuryApi
+
+  # ─── API Gateway ─────────────────────────────────────────────────
+
+  TreasuryApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Name: SolanaCFO Treasury API
+      Description: REST API for Solana Treasury Management Platform
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+      CorsConfiguration:
+        AllowOrigin:
+          - "https://app.solanacfo.dev"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - "Content-Type"
+          - "X-Amz-Date"
+          - "Authorization"
+          - "X-Api-Key"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'https://app.solanacfo.dev'"
+            gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+          ResponseTemplate: '{"message": "$context.error.message"}'
+        DEFAULT_5XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'https://app.solanacfo.dev'"
+          ResponseTemplate: '{"message": "Internal server error"}'
+
+  CognitoAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: SolanaCFO_Cognito_Authorizer
+      Type: COGNITO_USER_POOLS
+      ProviderARNs:
+        - !GetAtt CognitoUserPool.Arn
+      IdentitySource: method.request.header.Authorization
+
+  # ─── CloudWatch Alarms ───────────────────────────────────────────
+
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: solanacfo-lambda-errors
+      AlarmDescription: Alerts when Lambda functions have errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref RiskAlertsTopic
+      OKActions:
+        - !Ref RiskAlertsTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: solanacfo-council-deliberation
+
+  SQSDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: solanacfo-sqs-dlq-depth
+      AlarmDescription: Alerts when DLQ message count exceeds threshold
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref RiskAlertsTopic
+      Dimensions:
+        - Name: QueueName
+          Value: solanacfo-onchain-events-dlq
+
+  DynamoDBThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: solanacfo-dynamodb-throttles
+      AlarmDescription: Alerts when DynamoDB operations are throttled
+      Namespace: AWS/DynamoDB
+      MetricName: ThrottledRequests
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref RiskAlertsTopic
+
+  # ─── Outputs ──────────────────────────────────────────────────────
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TreasuryApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref CognitoUserPoolClient
+
+  TreasuriesTableName:
+    Description: Treasuries DynamoDB table name
+    Value: !Ref TreasuriesTable
+
+  OnChainEventsQueueUrl:
+    Description: SQS queue URL for on-chain events
+    Value: !Ref OnChainEventsQueue
+
+  TreasuryReportsBucketName:
+    Description: S3 bucket for treasury reports
+    Value: !Ref TreasuryReportsBucket
+
+  AudioBriefingsBucketName:
+    Description: S3 bucket for audio briefings
+    Value: !Ref AudioBriefingsBucket
+
+  PriceAlertsTopicArn:
+    Description: SNS topic ARN for price alerts
+    Value: !Ref PriceAlertsTopic
+
+  RiskAlertsTopicArn:
+    Description: SNS topic ARN for risk alerts
+    Value: !Ref RiskAlertsTopic
+
+  GovernanceAlertsTopicArn:
+    Description: SNS topic ARN for governance alerts
+    Value: !Ref GovernanceAlertsTopic
+
+  KMSKeyId:
+    Description: KMS CMK ID
+    Value: !Ref TreasuryKMSKey
+
+  VpcId:
+    Description: VPC ID
+    Value: !GetAtt VPCStack.Outputs.VpcId
+
+  LambdaExecutionRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn

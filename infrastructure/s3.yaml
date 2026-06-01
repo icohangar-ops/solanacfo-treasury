@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SolanaCFO Treasury — S3 buckets for reports, audio briefings, governance documents
+
+Parameters:
+  KMSKeyId:
+    Type: String
+    Description: KMS CMK ID for server-side encryption
+
+Resources:
+
+  TreasuryReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-treasury-reports-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KMSKeyId
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            TransitionInDays: 30
+            StorageClass: STANDARD_IA
+          - Id: ArchiveToGlacier
+            Status: Enabled
+            TransitionInDays: 90
+            StorageClass: GLACIER
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: DataClassification
+          Value: Confidential
+        - Key: Component
+          Value: Reports
+
+  TreasuryReportsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TreasuryReportsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnforceSSLOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt TreasuryReportsBucket.Arn
+              - !Sub "${TreasuryReportsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+          - Sid: EnforceKMS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:PutObject"
+            Resource: !Sub "${TreasuryReportsBucket.Arn}/*"
+            Condition:
+              StringNotEquals:
+                "s3:x-amz-server-side-encryption": "aws:kms"
+
+  AudioBriefingsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-audio-briefings-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KMSKeyId
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBriefings
+            Status: Enabled
+            ExpirationInDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - "https://app.solanacfo.dev"
+              - "http://localhost:3000"
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - "*"
+            ExposeHeaders:
+              - Content-Length
+              - Content-Type
+            MaxAge: 3600
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: DataClassification
+          Value: Confidential
+        - Key: Component
+          Value: AudioBriefings
+
+  AudioBriefingsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AudioBriefingsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnforceSSLOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt AudioBriefingsBucket.Arn
+              - !Sub "${AudioBriefingsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  GovernanceDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "solanacfo-governance-docs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KMSKeyId
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            TransitionInDays: 60
+            StorageClass: STANDARD_IA
+      Tags:
+        - Key: Project
+          Value: solanacfo-treasury
+        - Key: DataClassification
+          Value: Confidential
+        - Key: Component
+          Value: GovernanceDocuments
+
+  GovernanceDocumentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref GovernanceDocumentsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnforceSSLOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt GovernanceDocumentsBucket.Arn
+              - !Sub "${GovernanceDocumentsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+Outputs:
+  TreasuryReportsBucketName:
+    Value: !Ref TreasuryReportsBucket
+  TreasuryReportsBucketArn:
+    Value: !GetAtt TreasuryReportsBucket.Arn
+  AudioBriefingsBucketName:
+    Value: !Ref AudioBriefingsBucket
+  AudioBriefingsBucketArn:
+    Value: !GetAtt AudioBriefingsBucket.Arn
+  GovernanceDocumentsBucketName:
+    Value: !Ref GovernanceDocumentsBucket
+  GovernanceDocumentsBucketArn:
+    Value: !GetAtt GovernanceDocumentsBucket.Arn
