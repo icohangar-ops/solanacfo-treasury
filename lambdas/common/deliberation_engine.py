@@ -12,9 +12,11 @@ class TreasuryDeliberationEngine:
         contributions = []
         for role in AGENT_ROLES:
             try:
-                prompt = f"Treasury: {treasury_id}
-As the {role.replace('_', ' ').title()}, analyze: {json.dumps(context, default=str)[:2000]}
-JSON: {{analysis, risk_level, recommendations, confidence_score}}"
+                prompt = (
+                    f"Treasury: {treasury_id}\n"
+                    f"As the {role.replace('_', ' ').title()}, analyze: {json.dumps(context, default=str)[:2000]}\n"
+                    f"JSON: {{analysis, risk_level, recommendations, confidence_score}}"
+                )
                 result = self.bedrock.invoke(prompt=prompt, temperature=0.3)
                 contributions.append({"agent": role, "result": result})
             except Exception as e:

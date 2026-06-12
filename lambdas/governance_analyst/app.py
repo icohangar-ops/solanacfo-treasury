@@ -21,12 +21,8 @@ class GovernanceAnalyst:
     def analyze_governance(self, treasury_id, data):
         proposals = data.get("proposals", [])
         prompt = (
-            f"Treasury: {treasury_id}
-Proposals: {json.dumps(proposals[:5], default=str)}
-
-"
-            f"Analyze DAO proposals: token voting patterns, delegation analysis, alignment with treasury goals.
-"
+            f"Treasury: {treasury_id}\nProposals: {json.dumps(proposals[:5], default=str)}\n\n"
+            f"Analyze DAO proposals: token voting patterns, delegation analysis, alignment with treasury goals.\n"
             f"JSON: {{proposal_analyses, voting_recommendations, alignment_scores, confidence_score}}"
         )
         self.bedrock.invoke(prompt=prompt, system_prompt="You are a Governance Analyst for Solana DAOs. Analyze proposals and voting. JSON output.", temperature=0.3)

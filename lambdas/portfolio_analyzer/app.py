@@ -34,14 +34,9 @@ class PortfolioAnalyzer:
                     logger.warning("Failed to get balance for %s: %s", wallet, e)
 
         prompt = (
-            f"Treasury ID: {treasury_id}
-Positions: {len(positions)}
-"
-            f"On-chain data: {json.dumps(on_chain_data)}
-
-"
-            f"Analyze portfolio: concentration risk, DEX exposure, LP positions, overall health.
-"
+            f"Treasury ID: {treasury_id}\nPositions: {len(positions)}\n"
+            f"On-chain data: {json.dumps(on_chain_data)}\n\n"
+            f"Analyze portfolio: concentration risk, DEX exposure, LP positions, overall health.\n"
             f"JSON: {{positions_analysis, concentration_risk, dex_exposure, health_score, recommendations, confidence_score}}"
         )
         result = self.bedrock.invoke(prompt=prompt, system_prompt="You are a Portfolio Analyzer for Solana treasury management. Analyze on-chain positions and risks. JSON output with confidence scores.", temperature=0.2)

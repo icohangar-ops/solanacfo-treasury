@@ -25,11 +25,8 @@ class CouncilDeliberation:
         for agent in agents:
             try:
                 prompt = (
-                    f"Treasury: {treasury_id}
-Context: {json.dumps(data, default=str)[:2000]}
-"
-                    f"As the {agent.replace('_', ' ').title()}, provide your analysis.
-"
+                    f"Treasury: {treasury_id}\nContext: {json.dumps(data, default=str)[:2000]}\n"
+                    f"As the {agent.replace('_', ' ').title()}, provide your analysis.\n"
                     f"JSON: {{analysis, risk_level, recommendations, confidence_score}}"
                 )
                 result = self.bedrock.invoke(prompt=prompt, temperature=0.3)
@@ -38,11 +35,8 @@ Context: {json.dumps(data, default=str)[:2000]}
                 contributions.append({"agent": agent, "error": str(e)})
 
         synthesis_prompt = (
-            f"Treasury: {treasury_id}
-Agent Contributions: {json.dumps(contributions, default=str)[:3000]}
-"
-            f"Synthesize into final treasury management recommendation.
-"
+            f"Treasury: {treasury_id}\nAgent Contributions: {json.dumps(contributions, default=str)[:3000]}\n"
+            f"Synthesize into final treasury management recommendation.\n"
             f"JSON: {{recommendation, confidence, action_items, risk_assessment, allocation_changes}}"
         )
         synthesis = self.bedrock.invoke(prompt=synthesis_prompt, system_prompt="You are the Council Synthesizer for Solana treasury management. JSON output.", temperature=0.2)

@@ -22,13 +22,9 @@ class RiskMonitor:
         positions = data.get("positions", [])
         portfolio_value = sum(p.get("value_usd", 0) for p in positions)
         prompt = (
-            f"Treasury: {treasury_id}, Value: ${portfolio_value:,.0f}
-"
-            f"Positions: {json.dumps(positions[:10], default=str)}
-
-"
-            f"Assess risks: price exposure, liquidation risk, smart contract risk, impermanent loss.
-"
+            f"Treasury: {treasury_id}, Value: ${portfolio_value:,.0f}\n"
+            f"Positions: {json.dumps(positions[:10], default=str)}\n\n"
+            f"Assess risks: price exposure, liquidation risk, smart contract risk, impermanent loss.\n"
             f"JSON: {{risk_matrix, liquidation_risks, impermanent_loss, contract_risks, overall_risk_level, confidence_score}}"
         )
         self.bedrock.invoke(prompt=prompt, system_prompt="You are a Risk Monitor for Solana treasuries. Assess DeFi and on-chain risks. JSON output.", temperature=0.2)

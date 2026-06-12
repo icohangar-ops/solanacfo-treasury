@@ -22,14 +22,10 @@ class YieldStrategist:
         current_positions = data.get("positions", [])
         risk_tolerance = data.get("risk_tolerance", "moderate")
         prompt = (
-            f"Treasury: {treasury_id}, Risk Tolerance: {risk_tolerance}
-"
-            f"Current positions: {json.dumps(current_positions[:10], default=str)}
-
-"
-            f"Identify yield opportunities across Solana DeFi: lending, staking, LP farms, structured products.
-"
-            f"JSON: {{opportunities: [{name, protocol, apy, tvl, risk_rating, strategy}], confidence_score}}"
+            f"Treasury: {treasury_id}, Risk Tolerance: {risk_tolerance}\n"
+            f"Current positions: {json.dumps(current_positions[:10], default=str)}\n\n"
+            f"Identify yield opportunities across Solana DeFi: lending, staking, LP farms, structured products.\n"
+            f"JSON: {{opportunities: [{{name, protocol, apy, tvl, risk_rating, strategy}}], confidence_score}}"
         )
         self.bedrock.invoke(prompt=prompt, system_prompt="You are a Yield Strategist for Solana treasuries. Find optimal yield opportunities. JSON output.", temperature=0.3)
         logger.info("Yield strategy complete for %s", treasury_id)

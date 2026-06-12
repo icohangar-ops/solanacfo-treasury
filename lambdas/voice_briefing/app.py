@@ -25,12 +25,12 @@ class VoiceBriefing:
         if not treasury:
             return
         script = (
-            f"SolanaCFO Treasury Briefing for {treasury.get("name", "Treasury")}. "
-            f"Total value: {treasury.get("total_value_usd", 0):,.2f} USD. "
-            f"SOL balance: {treasury.get("sol_balance", 0):,.4f}. "
-            f"USDC balance: {treasury.get("usdc_balance", 0):,.2f}. "
-            f"Health score: {treasury.get("health_score", 0):.2f}. "
-            f"Risk tolerance: {treasury.get("risk_tolerance", "moderate")}."
+            f"SolanaCFO Treasury Briefing for {treasury.get('name', 'Treasury')}. "
+            f"Total value: {treasury.get('total_value_usd', 0):,.2f} USD. "
+            f"SOL balance: {treasury.get('sol_balance', 0):,.4f}. "
+            f"USDC balance: {treasury.get('usdc_balance', 0):,.2f}. "
+            f"Health score: {treasury.get('health_score', 0):.2f}. "
+            f"Risk tolerance: {treasury.get('risk_tolerance', 'moderate')}."
         )
         audio = self.deepgram.text_to_speech(script)
         logger.info("Voice briefing generated for %s", treasury_id)
