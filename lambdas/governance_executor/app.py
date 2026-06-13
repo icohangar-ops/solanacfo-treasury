@@ -45,10 +45,15 @@ class GovernanceExecutor:
         total = proposal.get("votes_for", 0) + proposal.get("votes_against", 0)
         quorum = proposal.get("votes_for", 0) / total if total > 0 else 0
         if quorum >= proposal.get("quorum_required", 0.6):
-            self.table.update_item(Key={"proposal_id": proposal_id},
-                UpdateExpression="SET #status = :s", ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":s": "executed"})
-            logger.info("Proposal %s executed with %.0f%% support", proposal_id, quorum * 100)
+            try:
+                self.table.update_item(Key={"proposal_id": proposal_id},
+                    UpdateExpression="SET #status = :s", ExpressionAttributeNames={"#status": "status"},
+                    ExpressionAttributeValues={":s": "executed", ":active": "active"},
+                    ConditionExpression="attribute_not_exists(#status) OR #status = :active")
+                logger.info("Proposal %s executed with %.0f%% support", proposal_id, quorum * 100)
+            except self.table.meta.client.exceptions.ConditionalCheckFailedException:
+                logger.info("Proposal %s already executed; skipping duplicate execution", proposal_id)
+                return {"proposal_id": proposal_id, "quorum": quorum, "executed": False, "duplicate": True}
         return {"proposal_id": proposal_id, "quorum": quorum, "executed": quorum >= proposal.get("quorum_required", 0.6)}
 
 def lambda_handler(event, context):

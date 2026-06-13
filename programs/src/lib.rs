@@ -35,6 +35,13 @@ pub mod treasury_governance {
     pub fn cast_vote(ctx: Context<CastVote>, vote: bool) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
         require!(proposal.status == ProposalStatus::Active, ErrorCode::ProposalNotActive);
+        // The voter_record PDA is initialized in this instruction (init), so a
+        // second vote from the same wallet on the same proposal fails because
+        // the account already exists. This prevents double-voting on-chain.
+        let voter_record = &mut ctx.accounts.voter_record;
+        voter_record.proposal = proposal.key();
+        voter_record.voter = ctx.accounts.voter.key();
+        voter_record.vote = vote;
         if vote {
             proposal.votes_for += 1;
         } else {
@@ -80,7 +87,17 @@ pub struct CreateProposal<'info> {
 pub struct CastVote<'info> {
     #[account(mut)]
     pub proposal: Account<'info, Proposal>,
+    #[account(
+        init,
+        payer = voter,
+        space = 8 + 32 + 32 + 1,
+        seeds = [proposal.key().as_ref(), voter.key().as_ref()],
+        bump
+    )]
+    pub voter_record: Account<'info, VoterRecord>,
+    #[account(mut)]
     pub voter: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -112,6 +129,13 @@ pub struct Proposal {
     pub status: ProposalStatus,
     pub creator: Pubkey,
     pub created_at: i64,
+}
+
+#[account]
+pub struct VoterRecord {
+    pub proposal: Pubkey,
+    pub voter: Pubkey,
+    pub vote: bool,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
