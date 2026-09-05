@@ -13,8 +13,12 @@ from typing import Any, Dict, Generator, List, Optional
 import boto3
 from botocore.exceptions import ClientError, ConnectionError, ThrottlingException
 
+from prism_observability import build_prism_telemetry, trace_llm as trace_prism_llm
+
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+
+_PRISM = build_prism_telemetry()
 
 DEFAULT_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 DEFAULT_MAX_TOKENS = 4096
@@ -131,6 +135,22 @@ class BedrockClient:
                     "attempt": attempt + 1,
                 }
 
+                trace_prism_llm(
+                    _PRISM,
+                    model=model_id,
+                    input_messages=request_body.get("messages", []),
+                    output=result["response"],
+                    latency_ms=latency_ms,
+                    token_count_input=int(result["usage"].get("input_tokens", 0) or 0),
+                    token_count_output=int(result["usage"].get("output_tokens", 0) or 0),
+                    metadata={
+                    "source": "solanacfo-treasury",
+                    "operation": "invoke",
+                    "system_prompt": bool(system_prompt),
+                    "fallback": self.model_id == self.fallback_model_id,
+                },
+            )
+
                 logger.info(
                     "Bedrock invocation success: model=%s, latency=%dms, tokens_in=%d, tokens_out=%d",
                     model_id,
@@ -215,6 +235,8 @@ class BedrockClient:
         )
 
         try:
+            start_time = time.time()
+            output_chunks: list[str] = []
             response = self.client.invoke_model_with_response_stream(
                 modelId=self.model_id,
                 body=json.dumps(request_body),
@@ -231,7 +253,20 @@ class BedrockClient:
                         if block.get("type") == "text":
                             text = block.get("text", "")
                             if text:
+                                output_chunks.append(text)
                                 yield text
+
+            trace_prism_llm(
+                _PRISM,
+                model=self.model_id,
+                input_messages=request_body.get("messages", []),
+                output="".join(output_chunks),
+                latency_ms=int((time.time() - start_time) * 1000),
+                metadata={
+                    "source": "solanacfo-treasury",
+                    "operation": "invoke_streaming",
+                },
+            )
 
         except ClientError as e:
             logger.error("Bedrock streaming error: %s", str(e))

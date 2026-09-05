@@ -36,6 +36,7 @@
 - **Governance Executor**: Create/execute proposals on-chain with quorum thresholds
 - **Voice Briefings**: Deepgram TTS treasury status updates
 - **Event-Driven Monitoring**: SQS-triggered alerts for large transfers and governance events
+- **Observability**: PRISMtrace on BlockConvey for Bedrock calls across the council
 
 ## Tech Stack
 
