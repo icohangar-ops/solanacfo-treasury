@@ -378,8 +378,7 @@ Resources:
       RedrivePolicy:
         maxReceiveCount: 3
         deadLetterTargetArn: !GetAtt OnChainEventsDLQ.Arn
-      Encryption:
-        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+      KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
       Tags:
         - Key: Project
           Value: solanacfo-treasury
@@ -388,6 +387,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: solanacfo-onchain-events-dlq
+      KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
 
   GovernanceEventsQueue:
     Type: AWS::SQS::Queue
@@ -398,13 +398,13 @@ Resources:
       RedrivePolicy:
         maxReceiveCount: 3
         deadLetterTargetArn: !GetAtt GovernanceEventsDLQ.Arn
-      Encryption:
-        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+      KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
 
   GovernanceEventsDLQ:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: solanacfo-governance-events-dlq
+      KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
 
   PriceAlertsQueue:
     Type: AWS::SQS::Queue
@@ -412,8 +412,7 @@ Resources:
       QueueName: solanacfo-price-alerts
       VisibilityTimeout: 120
       MessageRetentionPeriod: 86400
-      Encryption:
-        KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
+      KmsMasterKeyId: !GetAtt KMSStack.Outputs.KMSKeyId
 
   # ─── SNS Topics ───────────────────────────────────────────────────
 
